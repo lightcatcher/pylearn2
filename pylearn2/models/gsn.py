@@ -730,3 +730,53 @@ class JointGSN(GSN):
                                 symbolic=False)
 
         return np.array(list(itertools.chain(*data)))
+
+class RGSN(GSN):
+    @classmethod
+    def new(cls, big_gsn, sub_gsn, sub_walkback=0):
+        big_gsn.__class__ = cls
+        big_gsn.subgsn = sub_gsn
+        big_gsn.sub_walkback = sub_walkback
+
+
+    """
+    Things that need to be in constructor:
+    -fully initialized subgsn
+    """
+    def _update_activations(self, activations, idx_iter):
+        # subgsn exists for bottom layer (0)
+        super(RGSN, self)._update_activations(
+            activations,
+            filter(
+                lambda i: i not in [0],
+                idx_iter
+            )
+        )
+
+        if 0 in idx_iter:
+            """
+            # TESTING
+            bottom = (0, activations[0])
+
+            # TRAINING
+            # bottom = (0, init_val)
+            """
+
+            # minibatch to assign to subgsn. 0 refers to bottom layer of subgsn
+            minibatch = [
+                (0, activations[0]),  # this is for testing, modify for training
+                (len(self.subgsn), activations[1])
+            ]
+
+            # clamp the top layer of subgsn, T.ones_like provides a mask
+            clamped = [(len(self.subgsn), T.ones_like(activations[1]))]
+
+            # get_samples does exactly what we want to do.
+            # note that activations[0] is for larger gsn, indices=[0] is for subgsn
+            # the [-1][0] indexing is telling us to take the last time step from
+            # the subgsn chain and the first/only index we wanted to sample
+            activations[0] = self.subgsn.get_samples(
+                minibatch,
+                walkback=self.sub_walkback,
+                indices=[0], clamped=clamped
+            )[-1][0]
