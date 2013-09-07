@@ -27,7 +27,7 @@ from pylearn2.activations import identity
 from pylearn2.base import StackedBlocks
 from pylearn2.models.autoencoder import Autoencoder
 from pylearn2.models.model import Model
-from pylearn2.utils import safe_zip
+from pylearn2.utils import safe_zip, sharedX
 
 
 class GSN(StackedBlocks, Model):
@@ -827,3 +827,64 @@ class JointGSN(GSN):
                                 symbolic=False)
 
         return np.array(list(itertools.chain(*data)))
+
+
+class InterLayerGSN(JointGSN):
+    @classmethod
+    def convert(cls, gsn, input_idx=0, label_idx=None, tied=False):
+        gsn = super(InterLayerGSN, cls).convert(gsn,
+                                                input_idx=input_idx,
+                                                label_idx=label_idx)
+
+        # for layer i, gsn.aes[i].weights.shape[0] is the size of layer i
+        # but this doesn't work for the top layer
+
+        gsn._inter_weights = []
+        gsn._inter_wprime = []
+
+        output_size = gsn.aes[-1].weights.shape[1]
+
+        for i in xrange(1, gsn.nlayers - 1)):
+            hidden_size = gsn.aes[i].weights.shape[0]
+            w = sharedX(
+                (0.5 - rng.rand(hidden_size, output_size)) * 1e-3,
+                name='W',
+                borrow=True
+            )
+            gsn._inter_weights.append(w)
+
+            if not tied:
+                w = sharedX(
+                    (0.5 - rng.rand(hidden_size, output_size)) * 1e-3,
+                    name='W_prime',
+                    borrow=True
+                )
+
+            gsn._inter_wprime.append(w.T)
+
+        # extend params
+        gsn._params.extend(gsn._inter_weights)
+        if not tied:
+            gsn._params.extend(gsn._inter_wprime)
+
+        gsn.__class__ = cls
+
+    def get_params():
+        base = super(InterLayerGSN, self).get_params()
+        extra = self._inter_weights
+        return list(set(base) | set(extra))
+
+    def _update_activations(self, activations, idx_iter):
+        """
+        Handle the top layers odd logic.
+        """
+
+        top_idx = self.nlayers - 1
+        filtered = filter(lambda x: x != top_idx, idx_iter)
+        super(InterLayerGSN, self)._update_activations(activations, idx_iter)
+
+        if top_idx in idx_iter:
+            val = 0.0
+            for i in xrange(1, len(self.nlayers) - 1):
+                val += T.dot(activations[i], self._inter_weights[i - 1])
+            activations[top_idx] = val
